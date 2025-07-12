@@ -11,11 +11,17 @@ async def approval_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "approve":
         cur.execute("UPDATE users SET approved=1 WHERE telegram_id=?", (uid,))
         conn.commit()
-        await context.bot.send_message(
-            chat_id=uid,
-            text="🎉 Your profile is approved!\n\nTap below anytime to browse Sugar Customers.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔍 Browse Matches", callback_data="browse_matches")]])
-        )
+        cur.execute("SELECT role FROM users WHERE telegram_id=?", (uid,))
+role_row = cur.fetchone()
+if role_row and role_row[0] == "woman":
+     await context.bot.send_message(
+         chat_id=uid,
+        text="🎉 Your profile is approved!\n\nTap below anytime to browse Sugar Customers.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔍 Browse Matches", callback_data="browse_matches")]])
+    )
+else:
+    await context.bot.send_message(chat_id=uid, text="🎉 Your profile is approved!")
+
     else:
         cur.execute("DELETE FROM users WHERE telegram_id=?", (uid,))
         conn.commit()
