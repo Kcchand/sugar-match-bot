@@ -1,4 +1,3 @@
-# approval.py
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, ContextTypes
 from database import get_conn
@@ -6,37 +5,43 @@ from database import get_conn
 async def approval_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    action, uid = q.data.split("_")
-    uid = int(uid)
+    action, uid = q.data.split("_"); uid = int(uid)
 
-    conn = get_conn()
-    cur = conn.cursor()
+    conn = get_conn(); cur = conn.cursor()
 
     if action == "approve":
         cur.execute("UPDATE users SET approved=1 WHERE telegram_id=?", (uid,))
         conn.commit()
 
-        # Check if user is a woman
         cur.execute("SELECT role FROM users WHERE telegram_id=?", (uid,))
-        row = cur.fetchone()
+        role_row = cur.fetchone()
+        role = role_row[0] if role_row else None
 
-        if row and row[0] == "woman":
+        if role == "woman":
             await context.bot.send_message(
                 chat_id=uid,
-                text="🎉 Your profile is approved!\n\nTap below anytime to browse Sugar Customers.",
+                text=(
+                    "🎉 Your profile is approved!\n\n"
+                    "Tap the button below anytime to browse Sugar Customers near you."
+                ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Browse Matches", callback_data="browse_matches")]
                 ])
             )
-        else:
-            await context.bot.send_message(chat_id=uid, text="🎉 Your profile is approved!")
+        else:  # customer
+            await context.bot.send_message(
+                chat_id=uid,
+                text=(
+                    "✅ Your profile is approved! Sugar Women in your area can now "
+                    "view you. If someone likes your profile, expect a direct DM! 🍬"
+                )
+            )
 
-    elif action == "reject":
+    else:  # reject
         cur.execute("DELETE FROM users WHERE telegram_id=?", (uid,))
         conn.commit()
         await context.bot.send_message(chat_id=uid, text="❌ Your profile was rejected.")
 
-    # Remove the admin approval message
     await q.message.delete()
 
 async def browse_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
