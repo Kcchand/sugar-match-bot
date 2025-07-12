@@ -12,17 +12,11 @@ logger = logging.getLogger(__name__)
 
 async def start(update, context):
     welcome = (
-        "🍬 *Welcome to SUGAR CONNECT!*
-
-"
-        "💃 _Find Sugar Women_  |  🎩 _Meet Generous Sponsors_
-"
-        "🔐 100% Private & Discreet
-"
-        "💰 Start Your Sweet Connection Today!
-
-"
-        "👉 Tap /register to begin your journey!"
+        "🍬 *Welcome to SUGAR CONNECT!*\n\n"
+        "💃 Find Sugar Women | 🎩 Meet Generous Sponsors\n"
+        "🔐 100% Private & Discreet\n"
+        "💰 Start Your Sweet Connection Today!\n\n"
+        "👉 Click /register to begin!"
     )
     await update.message.reply_text(welcome, parse_mode="Markdown")
 
