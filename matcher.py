@@ -1,5 +1,4 @@
-# matcher.py
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CommandHandler, ContextTypes
 from database import get_conn
 import math
@@ -7,70 +6,71 @@ import math
 MATCH_RADIUS_KM = 50
 
 def haversine(lat1, lon1, lat2, lon2):
-    R = 6371  # Earth radius in km
+    R = 6371
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
-    d_lambda = math.radians(lon2 - lon1)
-    a = math.sin(d_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    d_phi  = math.radians(lat2 - lat1)
+    d_lamb = math.radians(lon2 - lon1)
+    a = math.sin(d_phi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(d_lamb/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 async def match_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    uid = update.effective_user.id
     conn = get_conn(); cur = conn.cursor()
 
-    # Get current user's info
-    cur.execute("SELECT role, approved, lat, lon FROM users WHERE telegram_id=?", (user_id,))
-    row = cur.fetchone()
-
-    if not row:
-        await update.message.reply_text("❌ You are not registered yet.")
+    cur.execute("SELECT role, approved, lat, lon FROM users WHERE telegram_id=?", (uid,))
+    me = cur.fetchone()
+    if not me:
+        await update.message.reply_text("❌ Register first with /register.")
         return
-
-    role, approved, user_lat, user_lon = row
-    if not approved:
-        await update.message.reply_text("⏳ Your profile is still pending approval.")
-        return
-
+    role, approved, my_lat, my_lon = me
     if role != "woman":
         await update.message.reply_text("🙅 Only Sugar Women can browse matches.")
         return
-
-    if not user_lat or not user_lon:
-        await update.message.reply_text("⚠️ Your location is missing. Please re-register.")
+    if not approved:
+        await update.message.reply_text("⏳ Profile pending admin approval.")
         return
 
-    # Get all approved customers
     cur.execute("""
-        SELECT telegram_id, name, age, bio, photo_file_id, lat, lon
-        FROM users
-        WHERE role='customer' AND approved=1 AND lat IS NOT NULL AND lon IS NOT NULL
+      SELECT telegram_id, username, name, age, bio, photo_file_id,
+             phone_number, lat, lon
+      FROM users
+      WHERE role='customer' AND approved=1 AND lat IS NOT NULL AND lon IS NOT NULL
     """)
-    customers = cur.fetchall()
-
-    matches = []
-    for cust in customers:
-        _, name, age, bio, photo_id, lat, lon = cust
-        dist = haversine(user_lat, user_lon, lat, lon)
+    candidates = cur.fetchall()
+    nearby = []
+    for c in candidates:
+        _, _, _, _, _, _, _, lat, lon = c
+        dist = haversine(my_lat, my_lon, lat, lon)
         if dist <= MATCH_RADIUS_KM:
-            matches.append((cust, dist))
+            nearby.append((c, dist))
 
-    if not matches:
-        await update.message.reply_text("😔 No Sugar Customers found within 50 km of your location.")
+    if not nearby:
+        await update.message.reply_text("😔 No Sugar Customers within 50 km.")
         return
 
-    # Show closest match
-    cust, dist = sorted(matches, key=lambda x: x[1])[0]
-    cid, name, age, bio, photo_id, _, _ = cust
+    cust, dist = sorted(nearby, key=lambda x: x[1])[0]
+    cid, username, name, age, bio, photo_id, phone, _, _ = cust
 
-    kb = [[
-        InlineKeyboardButton("💌 Accept", url=f"https://t.me/{cid}"),
-    ]]
+    if username:
+        kb = [[InlineKeyboardButton("💌 Message", url=f"https://t.me/{username}")]]
+        contact_line = f"@{username}"
+    elif phone:
+        kb = []
+        contact_line = f"📞 {phone}"
+    else:
+        kb = []
+        contact_line = "No contact available"
 
     await update.message.reply_photo(
         photo=photo_id,
-        caption=f"*{name}*, {age} y/o\n📍 ~{round(dist)} km away\n\n_{bio}_",
+        caption=(
+            f"*{name}*, {age} y/o\n"
+            f"📍 ~{round(dist)} km away\n"
+            f"{bio}\n\n"
+            f"{contact_line}"
+        ),
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(kb)
+        reply_markup=InlineKeyboardMarkup(kb) if kb else None
     )
 
 def get_match_handlers():
