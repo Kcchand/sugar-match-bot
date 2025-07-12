@@ -1,0 +1,2 @@
+# registration.py
+# Placeholder module
