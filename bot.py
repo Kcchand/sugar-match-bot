@@ -39,7 +39,9 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(get_registration_conversation())
-    app.add_handler(get_approval_handler())
+    for handler in get_approval_handler():
+     app.add_handler(handler)
+
     for h in get_match_handlers():
         app.add_handler(h)
 
