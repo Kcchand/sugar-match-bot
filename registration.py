@@ -1,6 +1,6 @@
+# registration.py
 from telegram import (
-    InlineKeyboardButton, InlineKeyboardMarkup, Update,
-    ReplyKeyboardRemove
+    InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardRemove
 )
 from telegram.ext import (
     ConversationHandler, CommandHandler, MessageHandler,
@@ -8,31 +8,33 @@ from telegram.ext import (
 )
 from config import ADMIN_CHAT_ID, USDT_WALLET, PAYMENT_AMOUNT
 from database import get_conn
-from utils import geocode_address
+from utils import geocode_address, dial_prefix_from_address
 
 ROLE, PHOTO, NAME, AGE, LOCATION_TEXT, BIO, PHONE, PAYMENT = range(8)
 
-def get_registration_conversation():
+# ───────── Conversation definition ─────────
+def get_registration_conversation() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CommandHandler("register", start_registration)],
         states={
-            ROLE: [CallbackQueryHandler(role_selected)],
-            PHOTO: [MessageHandler(filters.PHOTO, photo_received)],
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name_received)],
-            AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, age_received)],
-            LOCATION_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, location_received)],
-            BIO: [MessageHandler(filters.TEXT & ~filters.COMMAND, bio_received)],
-            PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, phone_received)],
-            PAYMENT: [MessageHandler(filters.PHOTO | filters.Document.IMAGE, payment_received)],
+            ROLE:           [CallbackQueryHandler(role_selected)],
+            PHOTO:          [MessageHandler(filters.PHOTO, photo_received)],
+            NAME:           [MessageHandler(filters.TEXT & ~filters.COMMAND, name_received)],
+            AGE:            [MessageHandler(filters.TEXT & ~filters.COMMAND, age_received)],
+            LOCATION_TEXT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, location_received)],
+            BIO:            [MessageHandler(filters.TEXT & ~filters.COMMAND, bio_received)],
+            PHONE:          [MessageHandler(filters.TEXT & ~filters.COMMAND, phone_received)],
+            PAYMENT:        [MessageHandler(filters.PHOTO | filters.Document.IMAGE, payment_received)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         name="REGISTRATION",
         persistent=True,
     )
 
+# ───────── Step handlers ─────────
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[
-        InlineKeyboardButton("👩 Sugar Woman", callback_data="woman"),
+        InlineKeyboardButton("👩 Sugar Woman",   callback_data="woman"),
         InlineKeyboardButton("🎩 Sugar Customer", callback_data="customer"),
     ]]
     await update.message.reply_text("Choose your role:", reply_markup=InlineKeyboardMarkup(kb))
@@ -69,8 +71,11 @@ async def location_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Couldn't find that place. Try again (city, country).")
         return LOCATION_TEXT
 
-    context.user_data["location_text"] = address
-    context.user_data["lat"], context.user_data["lon"] = lat, lon
+    context.user_data.update({
+        "location_text": address,
+        "lat": lat,
+        "lon": lon,
+    })
     await update.message.reply_text("Write a short bio about yourself:")
     return BIO
 
@@ -78,13 +83,23 @@ async def bio_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["bio"] = update.message.text.strip()
 
     if context.user_data["role"] == "customer":
-        await update.message.reply_text("📞 Please share your phone number (digits only, international format):")
+        await update.message.reply_text("📞 Phone number (digits only, no spaces):")
         return PHONE
 
-    return await ask_payment(update, context)  # Woman skips phone
+    return await ask_payment(update, context)
 
 async def phone_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["phone_number"] = update.message.text.strip()
+    raw = update.message.text.strip()
+    prefix = dial_prefix_from_address(context.user_data["location_text"])
+    if raw.startswith("+"):
+        final_phone = raw
+    elif prefix:
+        final_phone = f"{prefix}{raw.lstrip('0')}"
+    else:
+        await update.message.reply_text("⚠️ Include country code (e.g. +9779876...).")
+        return PHONE
+
+    context.user_data["phone_number"] = final_phone
     return await ask_payment(update, context)
 
 async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -101,14 +116,15 @@ async def payment_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.photo else update.message.document.file_id
     )
     context.user_data["payment_proof"] = proof_id
-    phone = context.user_data.get("phone_number")
 
+    phone = context.user_data.get("phone_number")
     conn = get_conn(); cur = conn.cursor()
     cur.execute("""
-        INSERT OR REPLACE INTO users
-        (telegram_id, role, username, name, age, bio, phone_number,
-         photo_file_id, payment_proof, location_text, lat, lon)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    INSERT OR REPLACE INTO users
+      (telegram_id, role, username, name, age, bio,
+       phone_number, photo_file_id, payment_proof,
+       location_text, lat, lon)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         update.effective_user.id,
         context.user_data["role"],
