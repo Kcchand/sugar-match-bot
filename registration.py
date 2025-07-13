@@ -103,12 +103,18 @@ async def phone_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await ask_payment(update, context)
 
 async def ask_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"💰 Send *${PAYMENT_AMOUNT} USDT* (TRC‑20) to:\n`{USDT_WALLET}`\n\n"
-        "Then upload a screenshot.",
-        parse_mode="Markdown"
+    """
+    Sends payment instructions with nicely formatted amount.
+    Expects PAYMENT_AMOUNT env var to be numeric (e.g. 50).
+    """
+    wallet_msg = (
+        "💰 *Almost done!*\n\n"
+        f"Send *${int(PAYMENT_AMOUNT)} USDT* (TRC20) to:\n"
+        f"`{USDT_WALLET}`\n\n"
+        "Then upload a screenshot of your payment to continue."
     )
-    return PAYMENT
+    await update.message.reply_text(wallet_msg, parse_mode="Markdown")
+    return PAYMENT 
 
 async def payment_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     proof_id = (
