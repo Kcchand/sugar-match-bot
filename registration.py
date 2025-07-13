@@ -1,7 +1,6 @@
 """
-Registration flow for Sugar Women & Sugar Customers
-– Customers must provide at least 2 photos
-– Stores approved_at timestamp handled in approval.py
+Registration flow
+– Sugar Customers must upload at least 2 photos
 """
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -13,7 +12,6 @@ from config import ADMIN_CHAT_ID, USDT_WALLET, PAYMENT_AMOUNT
 from database import get_conn
 from utils import geocode_address, dial_prefix_from_address
 
-# Conversation states
 ROLE, PHOTO, NAME, AGE, LOCATION_TEXT, BIO, PHONE, PAYMENT = range(8)
 
 def get_registration_conversation() -> ConversationHandler:
@@ -45,7 +43,7 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def role_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     context.user_data["role"] = q.data
-    context.user_data["photos"] = []        # initialise photo list
+    context.user_data["photos"] = []
     await q.message.reply_text("Please send a clear profile photo.")
     return PHOTO
 
@@ -54,15 +52,12 @@ async def photo_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     role = context.user_data["role"]
 
     if role == "customer":
-        # Customers need at least 2 photos
         context.user_data["photos"].append(photo_id)
         if len(context.user_data["photos"]) < 2:
-            await update.message.reply_text("📸 Great! Please send one more photo (minimum 2).")
+            await update.message.reply_text("📸 Please send one more photo (minimum 2).")
             return PHOTO
-        # When they have 2+ photos, use the first as main
         context.user_data["photo_file_id"] = context.user_data["photos"][0]
     else:
-        # Sugar Woman only needs 1 photo
         context.user_data["photo_file_id"] = photo_id
 
     await update.message.reply_text("Your name?")
@@ -76,7 +71,7 @@ async def name_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def age_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["age"] = update.message.text.strip()
     await update.message.reply_text(
-        "📍 What's your city and country?\n\n_Example: city, country_",
+        "📍 City & country? (e.g. *Kathmandu, Nepal*)",
         parse_mode="Markdown"
     )
     return LOCATION_TEXT
@@ -85,9 +80,8 @@ async def location_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     addr = update.message.text.strip()
     lat, lon = await geocode_address(addr)
     if lat is None:
-        await update.message.reply_text("⚠️ Couldn't find that place. Try again (city, country).")
+        await update.message.reply_text("⚠️ Couldn't find that place. Try again.")
         return LOCATION_TEXT
-
     context.user_data.update({"location_text": addr, "lat": lat, "lon": lon})
     await update.message.reply_text("Write a short bio about yourself:")
     return BIO
@@ -95,7 +89,7 @@ async def location_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def bio_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["bio"] = update.message.text.strip()
     if context.user_data["role"] == "customer":
-        await update.message.reply_text("📞 Phone number (digits only, intl. format or without code):")
+        await update.message.reply_text("📞 Phone number (with or without +code):")
         return PHONE
     return await ask_payment(update, context)
 
@@ -145,7 +139,25 @@ async def payment_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ))
     conn.commit()
 
-    # Notify admin
+    # ---------- admin approve / reject ----------
+    caption = (
+        f"👤 New {context.user_data['role']} registration\n"
+        f"Name: {context.user_data['name']} ({context.user_data['age']})\n"
+        f"Bio: {context.user_data['bio']}\n"
+        f"From: {context.user_data['location_text']}\n"
+        f"Phone: {phone or '—'}"
+    )
+    kb = [[
+        InlineKeyboardButton("✅ Approve", callback_data=f"approve_{update.effective_user.id}"),
+        InlineKeyboardButton("❌ Reject",  callback_data=f"reject_{update.effective_user.id}")
+    ]]
+    await context.bot.send_photo(
+        ADMIN_CHAT_ID,
+        photo=context.user_data["photo_file_id"],
+        caption=caption,
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
     await update.message.reply_text("✅ Submitted! Awaiting admin approval.")
     return ConversationHandler.END
 

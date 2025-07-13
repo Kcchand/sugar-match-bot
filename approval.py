@@ -2,48 +2,41 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, ContextTypes
 from database import get_conn
 import time
-from matcher import notify_women_if_needed, match_cmd  # ✅ import matcher logic
+from matcher import notify_women_if_needed
 
 async def approval_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    q = update.callback_query; await q.answer()
     action, uid = q.data.split("_"); uid = int(uid)
-
     conn = get_conn(); cur = conn.cursor()
 
     if action == "approve":
-        now = int(time.time())
+        now=int(time.time())
         cur.execute("UPDATE users SET approved=1, approved_at=? WHERE telegram_id=?", (now, uid))
         conn.commit()
 
         cur.execute("SELECT role, lat, lon FROM users WHERE telegram_id=?", (uid,))
-        role_row = cur.fetchone()
-        role, lat, lon = role_row if role_row else ("", None, None)
+        role, lat, lon = cur.fetchone()
 
         if role == "woman":
             await context.bot.send_message(
-                chat_id=uid,
-                text="🎉 Your profile is approved for 30 days! Tap below to find matches.",
+                uid,
+                "🎉 Your profile is approved! Use /match to browse Sugar Customers.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Browse Matches", callback_data="browse_matches")]
                 ])
             )
-        else:  # sugar customer
-            await context.bot.send_message(
-                chat_id=uid,
-                text="✅ You're now approved for 30 days. Sugar Women can now find you!"
-            )
+        else:
+            await context.bot.send_message(uid, "✅ You're approved! A Sugar Woman may DM you soon.")
             if lat and lon:
                 await notify_women_if_needed(context, lat, lon, customer_id=uid)
-
-    else:  # reject
+    else:
         cur.execute("DELETE FROM users WHERE telegram_id=?", (uid,))
         conn.commit()
-        await context.bot.send_message(chat_id=uid, text="❌ Your profile was rejected.")
+        await context.bot.send_message(uid, "❌ Your profile was rejected.")
     await q.message.delete()
 
 async def browse_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Make 'Browse Matches' work exactly like /match"""
+    from matcher import match_cmd
     await match_cmd(update, context)
 
 def get_approval_handler():
