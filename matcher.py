@@ -3,19 +3,20 @@ from telegram.ext import CommandHandler, CallbackQueryHandler, ContextTypes
 from database import get_conn
 import math, time
 
-MATCH_RADIUS_KM = 50
-DAYS_VALID = 30
-SECONDS_VALID = DAYS_VALID * 86400
-NOTIFY_COOLDOWN = 48 * 3600  # 48 hours in seconds
+MATCH_RADIUS_KM   = 50
+DAYS_VALID        = 30
+SECONDS_VALID     = DAYS_VALID * 86400
+NOTIFY_COOLDOWN   = 48 * 3600  # 48 h
 
-def haversine(lat1, lon1, lat2, lon2):
+def haversine(a_lat, a_lon, b_lat, b_lon):
     R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    dlat = math.radians(b_lat - a_lat)
+    dlon = math.radians(b_lon - a_lon)
+    a = (math.sin(dlat/2)**2 +
+         math.cos(math.radians(a_lat))*math.cos(math.radians(b_lat))*math.sin(dlon/2)**2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-# ───────────── /match ─────────────
+# ───────── /match or Browse button ─────────
 async def match_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     uid = update.effective_user.id
@@ -29,151 +30,124 @@ async def match_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = int(time.time())
     if role != "woman":
         await msg.reply_text("🙅 Only Sugar Women can use this."); return
-    if not approved or not approved_at or now - approved_at > SECONDS_VALID:
-        await msg.reply_text("⏳ Your access expired. Please /register again."); return
+    if not approved or now - approved_at > SECONDS_VALID:
+        await msg.reply_text("⏳ Subscription expired. Please /register again."); return
     if my_lat is None or my_lon is None:
-        await msg.reply_text("⚠️ Location missing. Please /register again."); return
+        await msg.reply_text("⚠️ Location missing. /register again with city, country."); return
 
+    # nearby customers (still valid)
     cur.execute("""
-        SELECT telegram_id, username, name, age, bio, photo_file_id,
-               phone_number, lat, lon, approved_at
-        FROM users
-        WHERE role='customer' AND approved=1 AND (? - approved_at) <= ?
-              AND lat IS NOT NULL AND lon IS NOT NULL
+      SELECT telegram_id, username, name, age, bio, photo_file_id,
+             phone_number, lat, lon, approved_at
+      FROM users
+      WHERE role='customer' AND approved=1
+            AND (? - approved_at) <= ?
+            AND lat IS NOT NULL AND lon IS NOT NULL
     """, (now, SECONDS_VALID))
-    candidates = cur.fetchall()
-    matches = [c for c in candidates if haversine(my_lat, my_lon, c[7], c[8]) <= MATCH_RADIUS_KM]
+    cands = [c for c in cur.fetchall() if haversine(my_lat,my_lon,c[7],c[8])<=MATCH_RADIUS_KM]
 
-    if not matches:
+    if not cands:
         await msg.reply_text(
-            "😔 No Sugar Customers nearby.\nChoose what you want to do:",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("🔔 Auto Notify", callback_data="enable_auto_notify"),
-                    InlineKeyboardButton("🔍 Manual Check", callback_data="disable_auto_notify")
-                ]
-            ])
+            "😔 No Sugar Customers within 50 km.\nChoose what to do:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔔 Auto Notify",  callback_data="enable_auto"),
+                InlineKeyboardButton("🔍 Manual Check", callback_data="disable_auto")
+            ]])
         )
         return
 
-    context.user_data["matches"] = matches
-    context.user_data["my_lat"] = my_lat
-    context.user_data["my_lon"] = my_lon
+    context.user_data["matches"] = cands
+    context.user_data["my_lat"]  = my_lat
+    context.user_data["my_lon"]  = my_lon
     await send_next(msg, context)
 
-# ───────────── Send 1 profile ─────────────
+# ───────── send one profile ─────────
 async def send_next(msg, context):
     if not context.user_data.get("matches"):
-        await context.bot.send_message(msg.chat_id, "✅ End of list. Check later.")
+        await context.bot.send_message(msg.chat_id,"✅ End of list. Come back later!")
         return
-
-    c = context.user_data["matches"].pop(0)
-    cid, username, name, age, bio, photo, phone, lat, lon, _ = c
-    dist_km = round(haversine(context.user_data["my_lat"], context.user_data["my_lon"], lat, lon))
-    caption = f"*{name}*, {age} y/o (~{dist_km} km)\n{bio}"
-    buttons = [[
-        InlineKeyboardButton("✅ Accept", callback_data=f"accept_{cid}"),
-        InlineKeyboardButton("❌ Skip", callback_data="skip_match")
-    ]]
+    cid, username, name, age, bio, photo, phone, lat, lon, _ = context.user_data["matches"].pop(0)
+    dist = round(haversine(context.user_data["my_lat"],context.user_data["my_lon"],lat,lon))
+    caption = f"*{name}*, {age} y/o (~{dist} km)\n{bio}"
+    kb=[[InlineKeyboardButton("✅ Accept",f"accept_{cid}"),
+         InlineKeyboardButton("❌ Skip","skip_match")]]
     await context.bot.send_photo(
-        chat_id=msg.chat_id,
-        photo=photo,
-        caption=caption,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(buttons)
+        chat_id=msg.chat_id, photo=photo,
+        caption=caption, parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ───────────── Accept / Skip ─────────────
-async def skip_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.delete()
-    await send_next(update.callback_query.message, context)
+# Skip/Accept
+async def skip_cb(u,c): await u.callback_query.answer(); await u.callback_query.message.delete(); await send_next(u.callback_query.message,c)
 
-async def accept_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    _, cid = q.data.split("_"); cid = int(cid)
-
-    cur = get_conn().cursor()
-    cur.execute("SELECT username, phone_number FROM users WHERE telegram_id=?", (cid,))
-    row = cur.fetchone()
-    username, phone = row if row else (None, None)
-
-    await context.bot.send_message(
-        chat_id=cid,
-        text="🍬 A Sugar Woman liked your profile! She may message you soon."
-    )
-    contact = f"https://t.me/{username}" if username else phone or "No contact info."
+async def accept_cb(update, context):
+    q=update.callback_query;await q.answer()
+    cid=int(q.data.split("_")[1])
+    cur=get_conn().cursor();cur.execute("SELECT username,phone_number FROM users WHERE telegram_id=?", (cid,))
+    row=cur.fetchone() or (None,None);username,phone=row
+    await context.bot.send_message(chat_id=cid,text="🍬 A Sugar Woman liked you!")
+    contact=f"https://t.me/{username}" if username else phone or "No contact info."
     await q.message.edit_reply_markup(reply_markup=None)
     await q.message.reply_text(f"✅ Accepted!\n\n{contact}")
-    await send_next(q.message, context)
+    await send_next(q.message,context)
 
-# ───────────── Auto / Manual Notify ─────────────
-async def auto_notify_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    choice = update.callback_query.data
-    context.user_data["auto_notify"] = (choice == "enable_auto_notify")
-    context.user_data["last_notified"] = 0
-    context.user_data["notified_customers"] = set()
-    await update.callback_query.answer(
-        "🔔 Auto-notify enabled!" if choice == "enable_auto_notify" else "🔕 Manual mode set."
-    )
+# Auto / Manual
+async def auto_mode_cb(update, context):
+    enable = update.callback_query.data == "enable_auto"
+    bot_state = context.application.bot_data.setdefault("auto_notify", {})  # writable dict
+    bot_state[update.effective_user.id] = {
+        "enabled": enable,
+        "last": 0,
+        "notified": set()
+    }
+    msg = "🔔 Auto‑notify enabled!" if enable else "🔕 Auto‑notify disabled."
+    await update.callback_query.answer(msg)
     await update.callback_query.message.edit_reply_markup(reply_markup=None)
 
-# ───────────── /stopnotify ─────────────
-async def stop_notify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["auto_notify"] = False
-    await update.message.reply_text("🔕 Auto-notify disabled. You can still use /match anytime.")
+async def stop_notify_cmd(update, context):
+    bot_state=context.application.bot_data.setdefault("auto_notify",{})
+    bot_state[update.effective_user.id]={"enabled":False,"last":0,"notified":set()}
+    await update.message.reply_text("🔕 Auto‑notify disabled. Use /match anytime.")
 
-# ───────────── 🔔 Push Profile If New ─────────────
-async def notify_women_if_needed(context, customer_lat, customer_lon, customer_id):
-    cur = get_conn().cursor()
-    cur.execute("SELECT telegram_id, username, name, age, bio, photo_file_id, phone_number, lat, lon FROM users WHERE telegram_id=?", (customer_id,))
-    c = cur.fetchone()
-    if not c: return
+# ───────── notify women when customer approved ─────────
+async def notify_women_if_needed(context, cust_lat,cust_lon, customer_id):
+    cur=get_conn().cursor()
+    # profile data of new customer
+    cur.execute("SELECT username,name,age,bio,photo_file_id,phone_number,lat,lon FROM users WHERE telegram_id=?", (customer_id,))
+    data=cur.fetchone(); if not data: return
+    username,name,age,bio,photo,phone,lat,lon=data
+    caption_tpl=f"*{name}*, {age} y/o (~{{}} km)\n{bio}"
+    buttons=[[InlineKeyboardButton("✅ Accept",f"accept_{customer_id}"),
+              InlineKeyboardButton("❌ Skip","skip_match")]]
+    bot_state=context.application.bot_data.setdefault("auto_notify",{})
+    now=int(time.time())
 
-    cid, username, name, age, bio, photo, phone, lat, lon = c
-    caption_template = f"*{name}*, {age} y/o (~{{dist}} km)\n{bio}"
-    buttons = [[
-        InlineKeyboardButton("✅ Accept", callback_data=f"accept_{cid}"),
-        InlineKeyboardButton("❌ Skip", callback_data="skip_match")
-    ]]
+    cur.execute("SELECT telegram_id,lat,lon FROM users WHERE role='woman' AND approved=1 AND lat IS NOT NULL AND lon IS NOT NULL")
+    for wid,wlat,wlon in cur.fetchall():
+        if haversine(cust_lat,cust_lon,wlat,wlon) > MATCH_RADIUS_KM: continue
+        state=bot_state.get(wid)
+        if not state or not state["enabled"]: continue
+        if customer_id in state["notified"]: continue
+        if now-state["last"]<NOTIFY_COOLDOWN: continue
 
-    cur.execute("SELECT telegram_id, lat, lon FROM users WHERE role='woman' AND approved=1 AND lat IS NOT NULL AND lon IS NOT NULL")
-    women = cur.fetchall()
-    now = int(time.time())
+        dist=round(haversine(wlat,wlon,lat,lon))
+        try:
+            await context.bot.send_photo(
+                chat_id=wid, photo=photo,
+                caption=caption_tpl.format(dist),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+            state["last"]=now
+            state["notified"].add(customer_id)
+        except Exception as e:
+            print("Notify error:",e)
 
-    for wid, wlat, wlon in women:
-        if haversine(customer_lat, customer_lon, wlat, wlon) <= MATCH_RADIUS_KM:
-            data = context.application.user_data.setdefault(wid, {})
-            if not data.get("auto_notify"): continue
-
-            # Respect cooldown
-            last = data.get("last_notified", 0)
-            notified = data.setdefault("notified_customers", set())
-            if customer_id in notified: continue
-            if now - last < NOTIFY_COOLDOWN: continue
-
-            # Send profile
-            try:
-                dist = round(haversine(wlat, wlon, lat, lon))
-                await context.bot.send_photo(
-                    chat_id=wid,
-                    photo=photo,
-                    caption=caption_template.format(dist=dist),
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup(buttons)
-                )
-                # Update state
-                data["last_notified"] = now
-                data["notified_customers"].add(customer_id)
-            except Exception as e:
-                print(f"❌ Notify failed: {e}")
-
-# ───────────── Register handlers ─────────────
 def get_match_handlers():
     return [
         CommandHandler("match", match_cmd),
         CommandHandler("stopnotify", stop_notify_cmd),
         CallbackQueryHandler(skip_cb,  pattern="^skip_match$"),
         CallbackQueryHandler(accept_cb,pattern="^accept_\\d+$"),
-        CallbackQueryHandler(auto_notify_cb, pattern="^enable_auto_notify$|^disable_auto_notify$")
+        CallbackQueryHandler(auto_mode_cb, pattern="^enable_auto$|^disable_auto$")
     ]
