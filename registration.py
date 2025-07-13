@@ -71,7 +71,7 @@ async def name_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def age_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["age"] = update.message.text.strip()
     await update.message.reply_text(
-        "📍 City & country? (e.g. *Kathmandu, Nepal*)",
+        "📍 City & country? (e.g. *City, Country*)",
         parse_mode="Markdown"
     )
     return LOCATION_TEXT
