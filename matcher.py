@@ -114,7 +114,10 @@ async def notify_women_if_needed(context, cust_lat,cust_lon, customer_id):
     cur=get_conn().cursor()
     # profile data of new customer
     cur.execute("SELECT username,name,age,bio,photo_file_id,phone_number,lat,lon FROM users WHERE telegram_id=?", (customer_id,))
-    data=cur.fetchone(); if not data: return
+    data = cur.fetchone()
+    if not data:
+        return
+
     username,name,age,bio,photo,phone,lat,lon=data
     caption_tpl=f"*{name}*, {age} y/o (~{{}} km)\n{bio}"
     buttons=[[InlineKeyboardButton("✅ Accept",f"accept_{customer_id}"),
