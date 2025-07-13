@@ -1,6 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, ContextTypes
 from database import get_conn
+import time
 
 async def approval_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -10,30 +11,31 @@ async def approval_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_conn(); cur = conn.cursor()
 
     if action == "approve":
-        cur.execute("UPDATE users SET approved=1 WHERE telegram_id=?", (uid,))
+        now = int(time.time())
+        cur.execute("UPDATE users SET approved=1, approved_at=? WHERE telegram_id=?", (now, uid))
         conn.commit()
 
         cur.execute("SELECT role FROM users WHERE telegram_id=?", (uid,))
-        role_row = cur.fetchone()
-        role = role_row[0] if role_row else None
+        role = cur.fetchone()[0]
 
         if role == "woman":
             await context.bot.send_message(
                 chat_id=uid,
                 text=(
-                    "🎉 Your profile is approved!\n\n"
-                    "Tap the button below anytime to browse Sugar Customers near you."
+                    "🎉 Your profile is approved for the next 30 days!\n\n"
+                    "Tap below anytime to browse Sugar Customers."
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔍 Browse Matches", callback_data="browse_matches")]
                 ])
             )
-        else:  # customer
+        else:
             await context.bot.send_message(
                 chat_id=uid,
                 text=(
-                    "✅ Your profile is approved! Sugar Women in your area can now "
-                    "view you. If someone likes your profile, expect a direct DM! 🍬"
+                    "✅ Your profile is approved for the next 30 days!\n"
+                    "Sugar Women near you can now view your profile. If someone likes you, "
+                    "she’ll DM you directly. 🍬"
                 )
             )
 

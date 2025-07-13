@@ -1,5 +1,4 @@
-import sqlite3
-import logging
+import sqlite3, logging, time
 logger = logging.getLogger(__name__)
 
 DB_NAME = "sugar_match.db"
@@ -8,8 +7,7 @@ def get_conn():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
+    conn = get_conn(); cur = conn.cursor()
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
         telegram_id    INTEGER PRIMARY KEY,
@@ -24,7 +22,8 @@ def init_db():
         location_text  TEXT,
         lat            REAL,
         lon            REAL,
-        approved       INTEGER DEFAULT 0
+        approved       INTEGER DEFAULT 0,
+        approved_at    INTEGER          -- Unix timestamp
     )
     """)
     cur.execute("""
@@ -45,6 +44,7 @@ def ensure_columns():
         ("location_text", "TEXT"),
         ("lat", "REAL"),
         ("lon", "REAL"),
+        ("approved_at", "INTEGER"),
     ]:
         if name not in cols:
             logger.info("Adding column %s", name)
