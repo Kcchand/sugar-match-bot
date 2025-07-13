@@ -119,7 +119,10 @@ async def notify_women_if_needed(context, cust_lat, cust_lon, customer_id):
     cur.execute("""
         SELECT username,name,age,bio,photo_file_id,phone_number,lat,lon
         FROM users WHERE telegram_id=?""", (customer_id,))
-    d=cur.fetchone();  if not d: return
+    d = cur.fetchone()
+    if not d:
+        return
+
     username,name,age,bio,photo,phone,lat,lon=d
     cap_tpl=f"*{name}*, {age} y/o (~{{}} km)\n{bio}"
     kb=[[InlineKeyboardButton("✅ Accept",f"accept_{customer_id}"),
