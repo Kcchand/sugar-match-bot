@@ -145,7 +145,9 @@ async def auto_notify_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.edit_text("✅ Manual mode selected. You can run /match anytime.")
 
 # Externally trigger this when a customer is approved
-async def notify_women_if_needed(context: ContextTypes.DEFAULT_TYPE, customer_lat, customer_lon):
+# matcher.py
+
+async def notify_women_if_needed(context, customer_lat, customer_lon, customer_id=None):
     cur = get_conn().cursor()
     cur.execute("""
       SELECT telegram_id, lat, lon
@@ -153,18 +155,41 @@ async def notify_women_if_needed(context: ContextTypes.DEFAULT_TYPE, customer_la
       WHERE role='woman' AND approved=1 AND lat IS NOT NULL AND lon IS NOT NULL
     """)
     women = cur.fetchall()
+
     for wid, wlat, wlon in women:
         dist = haversine(customer_lat, customer_lon, wlat, wlon)
         if dist <= MATCH_RADIUS_KM:
-            data = context.application.user_data.get(wid, {})
+            data = context.application.user_data.setdefault(wid, {})
             if data.get("auto_notify"):
                 try:
-                    await context.bot.send_message(
+                    # Reuse match logic to send profile directly
+                    cur.execute("""
+                        SELECT telegram_id, username, name, age, bio, photo_file_id,
+                               phone_number, lat, lon, approved_at
+                        FROM users WHERE telegram_id=? LIMIT 1
+                    """, (customer_id,))
+                    cust = cur.fetchone()
+                    if not cust: continue
+
+                    cid, username, name, age, bio, photo, phone, lat, lon, _ = cust
+                    dist_km = round(haversine(wlat, wlon, lat, lon))
+                    caption = f"*{name}*, {age} y/o (~{dist_km} km)\n{bio}"
+
+                    buttons = [[
+                        InlineKeyboardButton("✅ Accept", callback_data=f"accept_{cid}"),
+                        InlineKeyboardButton("❌ Skip", callback_data="skip_match")
+                    ]]
+
+                    await context.bot.send_photo(
                         chat_id=wid,
-                        text="📢 A new Sugar Customer has joined near you! Tap /match to see his profile."
+                        photo=photo,
+                        caption=caption,
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup(buttons)
                     )
-                except Exception:
-                    pass  # ignore users who blocked the bot
+                except Exception as e:
+                    print(f"❌ Notify error: {e}")
+
 
 def get_match_handlers():
     return [
